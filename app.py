@@ -137,14 +137,12 @@ def get_bad_actors_by_components(df, make_model):
     # Take top 10
     top_10 = filtered.head(10).copy()
     
-    # Prepare display columns
+    # Prepare display columns (trend and cost impact removed from Level 2)
     display_cols = {
         'component_id': 'Component',
         'failure_rate_per_1000h': 'Failure Rate / 1000h',
         'mtbf_hours': 'MTBF (hours)',
         'mtbf_vs_fleet': 'MTBF vs Fleet (%)',
-        'trend': 'Trend',
-        'estimated_cost_per_failure': 'Cost Impact',
         'vessels_affected': 'Vessels Affected',
         'failure_count': 'Total Failures',
         'bad_actor_rank': 'Rank'
@@ -157,12 +155,6 @@ def get_bad_actors_by_components(df, make_model):
     if 'MTBF vs Fleet (%)' in result.columns:
         result['MTBF vs Fleet (%)'] = result['MTBF vs Fleet (%)'].apply(
             lambda x: f"{x:.1f}%" if pd.notna(x) else "N/A"
-        )
-    
-    # Format Cost Impact
-    if 'Cost Impact' in result.columns:
-        result['Cost Impact'] = result['Cost Impact'].apply(
-            lambda x: format_number(x, 0) if pd.notna(x) and x > 0 else "N/A"
         )
     
     return result
@@ -194,8 +186,7 @@ def get_bad_actors_by_failure_modes(df, make_model):
                 'Failure Rate / 1000h': top_fm_rate if top_fm_rate > 0 else row.get('failure_rate_per_1000h', 0),
                 'MTBF (hours)': row.get('mtbf_hours', 0),
                 'Affected Components': row.get('component_id', 'Unknown'),
-                'Vessels Affected': row.get('vessels_affected', 0),
-                'Trend': row.get('trend', '→')
+                'Vessels Affected': row.get('vessels_affected', 0)
             })
     
     if len(failure_modes_list) == 0:
@@ -207,8 +198,7 @@ def get_bad_actors_by_failure_modes(df, make_model):
                 'Failure Rate / 1000h': row.get('failure_rate_per_1000h', 0),
                 'MTBF (hours)': row.get('mtbf_hours', 0),
                 'Affected Components': row.get('component_id', 'Unknown'),
-                'Vessels Affected': row.get('vessels_affected', 0),
-                'Trend': row.get('trend', '→')
+                'Vessels Affected': row.get('vessels_affected', 0)
             })
     
     fm_df = pd.DataFrame(failure_modes_list)
@@ -218,8 +208,7 @@ def get_bad_actors_by_failure_modes(df, make_model):
             'Failure Count': 'sum',
             'Failure Rate / 1000h': 'mean',  # Use mean for aggregated failure rate
             'MTBF (hours)': 'mean',
-            'Vessels Affected': 'sum',
-            'Trend': lambda x: x.mode()[0] if len(x.mode()) > 0 else '→'  # Most common trend
+            'Vessels Affected': 'sum'
         }).reset_index()
         # Rank by Failure Rate (as per requirement), not count
         fm_agg = fm_agg.sort_values('Failure Rate / 1000h', ascending=False).head(10)
@@ -377,19 +366,10 @@ def show_level_1_make_model_selection(df):
     st.markdown(f"**Found {len(filtered_summary)} Make/Model combinations**")
     st.markdown("---")
     
-    # Add trend and cost data from main dataframe
-    trend_data = df.groupby('make_model').agg({
-        'trend': lambda x: x.mode()[0] if len(x.mode()) > 0 and x.mode()[0] else '→',
-        'total_cost_impact': 'sum'
-    }).reset_index()
-    trend_data.columns = ['make_model', 'trend', 'total_cost']
-    
-    filtered_summary = filtered_summary.merge(trend_data, on='make_model', how='left')
-    
-    # Create display dataframe
+    # Create display dataframe (trend and cost impact removed from Level 1)
     display_cols = ['make_model', 'equipment_type_summary', 'total_failures',
         'total_vessels', 'overall_mtbf_hours', 'overall_failure_rate_per_1000h',
-        'component_count', 'trend', 'total_cost']
+        'component_count']
     display_cols = [c for c in display_cols if c in filtered_summary.columns]
     display_df = filtered_summary[display_cols].copy()
     
@@ -401,9 +381,7 @@ def show_level_1_make_model_selection(df):
         'total_vessels': 'Total Vessels',
         'overall_mtbf_hours': 'MTBF (hours)',
         'overall_failure_rate_per_1000h': 'Failure Rate / 1000h',
-        'component_count': 'Components',
-        'trend': 'Trend',
-        'total_cost': 'Cost Impact'
+        'component_count': 'Components'
     }
     display_df = display_df.rename(columns=column_rename)
     
@@ -411,16 +389,6 @@ def show_level_1_make_model_selection(df):
     display_df['Total Failures'] = display_df['Total Failures'].apply(lambda x: format_number(x, 0))
     display_df['MTBF (hours)'] = display_df['MTBF (hours)'].apply(lambda x: format_number(x, 1) if pd.notna(x) else "N/A")
     display_df['Failure Rate / 1000h'] = display_df['Failure Rate / 1000h'].apply(lambda x: format_number(x, 2) if pd.notna(x) else "N/A")
-    
-    # Format trend
-    if 'Trend' in display_df.columns:
-        display_df['Trend'] = display_df['Trend'].fillna('→')
-    
-    # Format cost
-    if 'Cost Impact' in display_df.columns:
-        display_df['Cost Impact'] = display_df['Cost Impact'].apply(
-            lambda x: f"${format_number(x, 0)}" if pd.notna(x) and x > 0 else "N/A"
-        )
     
     # Display table with selection
     selected_indices = st.dataframe(
@@ -490,7 +458,7 @@ def show_level_2_bad_actors(df, make_model):
     
     st.markdown("---")
     
-    # Three tabs for different bad actor views
+    # Three tabs: Components, Failure Modes, Spare Parts
     tab1, tab2, tab3 = st.tabs(["🔧 Components", "⚠️ Failure Modes", "🔩 Spare Parts"])
     
     # TAB 1: Components
@@ -541,7 +509,7 @@ def show_level_2_bad_actors(df, make_model):
         else:
             st.info("No failure mode data available for this Make/Model.")
     
-    # TAB 3: Spare Parts
+    # TAB 3: Spare Parts (Top 10 by consumption for whole Make/Model)
     with tab3:
         st.markdown("### Top 10 Spare Parts by Consumption")
         parts_df = get_bad_actors_by_parts(df, make_model)
@@ -552,8 +520,6 @@ def show_level_2_bad_actors(df, make_model):
             # Summary metrics
             st.markdown("---")
             col1, col2, col3 = st.columns(3)
-            
-            # Calculate total from make/model data
             mm_data = df[df['make_model'] == make_model]
             total_cost = mm_data['total_cost_impact'].sum()
             avg_cost_per_failure = mm_data['estimated_cost_per_failure'].mean()
@@ -563,11 +529,10 @@ def show_level_2_bad_actors(df, make_model):
             with col2:
                 st.metric("Avg Cost per Failure", format_number(avg_cost_per_failure, 2) if pd.notna(avg_cost_per_failure) else "N/A")
             with col3:
-                # Count stock risks
                 high_risk = len(mm_data[mm_data['stock_risk'] == 'High'])
                 st.metric("Components with High Stock Risk", high_risk)
         else:
-            st.info("No spare parts data available. Run data_pipeline.py with DG RMA Analysis.xlsm to populate parts data.")
+            st.info("No spare parts data available. Run data_pipeline.py to populate parts data.")
     
     return None
 
@@ -681,8 +646,8 @@ def show_level_3_detailed_analytics(df, make_model, component_id):
         })
         st.dataframe(rc_df, use_container_width=True)
     
-    # C. Action Taken + Spare Parts Impact
-    with st.expander("🔧 Action Taken & Spare Parts Impact", expanded=False):
+    # C. Action Taken
+    with st.expander("🔧 Action Taken", expanded=False):
         st.markdown("### Action Taken Analytics")
         
         # Action type breakdown
@@ -747,17 +712,22 @@ def show_level_3_detailed_analytics(df, make_model, component_id):
             if permanently_eliminates:
                 st.success("✅ **Actions have permanently eliminated failures (MTBF improved >2x)**")
         
-        # Spare Parts Impact
-        st.markdown("---")
-        st.markdown("### Spare Parts Impact")
+        # Stakeholder Communication Summary
+        stakeholder_comm = component_data.get('stakeholder_communication_summary', None)
+        if stakeholder_comm:
+            st.markdown("---")
+            st.markdown("### Stakeholder Communication Summary")
+            st.info(f"**Communications with:** {stakeholder_comm}")
+    
+    # D. Spare Parts Impact (separate expander)
+    with st.expander("📦 Spare Parts Impact", expanded=False):
         cost_per_failure = component_data.get('estimated_cost_per_failure', None)
         total_cost = component_data.get('total_cost_impact', None)
         stock_risk = component_data.get('stock_risk', None)
         parts_per_failure = component_data.get('parts_per_failure', None)
-        top_parts_str = component_data.get('top_parts', None)
-        top_consumption_str = component_data.get('top_parts_consumption', None)
+        parts_detail_json = component_data.get('parts_detail_json', None)
         
-        # Display metrics
+        # Summary metrics
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric("Cost per Failure", f"${format_number(cost_per_failure, 2)}" if pd.notna(cost_per_failure) and cost_per_failure > 0 else "N/A")
@@ -772,31 +742,25 @@ def show_level_3_detailed_analytics(df, make_model, component_id):
             else:
                 st.metric("Stock Risk", "N/A")
         
-        # Display top parts for this component
-        if top_parts_str and pd.notna(top_parts_str) and top_parts_str != 'None':
+        # Parts breakdown table (Part Name, Count, Unit Cost, Total Cost)
+        if parts_detail_json and pd.notna(parts_detail_json) and str(parts_detail_json) != '[]':
             try:
-                import ast
-                top_parts = ast.literal_eval(top_parts_str)
-                top_consumption = ast.literal_eval(top_consumption_str) if top_consumption_str and pd.notna(top_consumption_str) else [0] * len(top_parts)
-                
-                if top_parts:
-                    st.markdown("**Top Parts Replaced for this Component:**")
-                    parts_table = pd.DataFrame({
-                        'Part Name': top_parts,
-                        'Consumption': [int(c) for c in top_consumption[:len(top_parts)]]
+                import json
+                parts_list = json.loads(parts_detail_json)
+                if parts_list:
+                    parts_df = pd.DataFrame(parts_list)
+                    parts_df = parts_df.rename(columns={
+                        'part_name': 'Part Name',
+                        'count': 'Count',
+                        'unit_cost': 'Unit Cost ($)',
+                        'total_cost': 'Total Cost ($)'
                     })
-                    st.dataframe(parts_table, use_container_width=True, hide_index=True)
-            except:
+                    st.markdown("**Parts Breakdown:**")
+                    st.dataframe(parts_df, use_container_width=True, hide_index=True)
+            except Exception:
                 pass
-        elif not (pd.notna(cost_per_failure) or pd.notna(total_cost)):
+        else:
             st.info("No spare parts data available for this component.")
-        
-        # Stakeholder Communication Summary
-        stakeholder_comm = component_data.get('stakeholder_communication_summary', None)
-        if stakeholder_comm:
-            st.markdown("---")
-            st.markdown("### Stakeholder Communication Summary")
-            st.info(f"**Communications with:** {stakeholder_comm}")
     
     # D. Decision & Action Panel (Sticky)
     st.markdown("---")

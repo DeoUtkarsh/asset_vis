@@ -112,29 +112,129 @@ def standardize_vessel_name(name):
     return str(name).strip().upper()
 
 
+# Global FMECA data cache
+_FMECA_DATA = None
+_FMECA_SYMPTOMS = None
+
+def load_fmeca_data():
+    """
+    Load FMECA Documents.xlsx and create component matching data
+    Returns DataFrame with Equipment, Component, Failure_Symptom mappings
+    """
+    global _FMECA_DATA, _FMECA_SYMPTOMS
+    
+    if _FMECA_DATA is not None:
+        return _FMECA_DATA, _FMECA_SYMPTOMS
+    
+    fmeca_file = DATA_FOLDER / "FMECA Documents.xlsx"
+    if not fmeca_file.exists():
+        print(f"  Warning: FMECA file not found at {fmeca_file}")
+        return None, None
+    
+    try:
+        df = pd.read_excel(fmeca_file, sheet_name='FMECA')
+        # Keep relevant columns
+        _FMECA_DATA = df[['Equipment', 'Component', 'Failure_Symptom', 'Failure_Mode']].copy()
+        _FMECA_DATA = _FMECA_DATA.dropna(subset=['Component'])
+        
+        # Create symptom to component mapping for matching
+        _FMECA_SYMPTOMS = {}
+        for _, row in _FMECA_DATA.iterrows():
+            symptom = str(row['Failure_Symptom']).upper() if pd.notna(row['Failure_Symptom']) else ''
+            component = row['Component']
+            equipment = row['Equipment']
+            if symptom and len(symptom) > 3:
+                # Extract key phrases from symptom for matching
+                key_phrases = [s.strip() for s in symptom.split(',') if len(s.strip()) > 3]
+                for phrase in key_phrases:
+                    if phrase not in _FMECA_SYMPTOMS:
+                        _FMECA_SYMPTOMS[phrase] = (equipment, component)
+        
+        print(f"  Loaded FMECA data: {len(_FMECA_DATA)} records, {len(_FMECA_SYMPTOMS)} symptom patterns")
+        return _FMECA_DATA, _FMECA_SYMPTOMS
+    except Exception as e:
+        print(f"  Warning: Error loading FMECA file: {e}")
+        return None, None
+
+
 def extract_component_from_description(description):
     """
     Section 9.2: Component Extraction from Descriptions
-    Extract component identifiers from failure descriptions
+    Extract component identifiers from failure descriptions using FMECA matching
     """
     if pd.isna(description):
         return None
     
     desc = str(description).upper()
     
-    # Look for common patterns
-    patterns = {
-        'AE1': 'AE1', 'AE2': 'AE2', 'AE3': 'AE3', 'AE4': 'AE4',
-        'ME1': 'ME1', 'ME2': 'ME2', 'ME UNIT': 'ME',
-        'GE1': 'GE1', 'GE2': 'GE2', 'GE #1': 'GE1', 'GE #2': 'GE2',
-        'TC': 'Turbocharger', 'TURBOCHARGER': 'Turbocharger',
-        'FUEL PUMP': 'Fuel Pump', 'JCFW': 'JCFW Pump',
-        'LO PURIFIER': 'LO Purifier', 'AIR COMPRESSOR': 'Air Compressor',
+    # Priority 1: Match against FMECA symptoms for actual component names
+    global _FMECA_SYMPTOMS
+    if _FMECA_SYMPTOMS:
+        for symptom_phrase, (equipment, component) in _FMECA_SYMPTOMS.items():
+            if symptom_phrase in desc:
+                return component
+    
+    # Priority 2: Pattern-based matching for common component keywords
+    component_patterns = {
+        # Turbocharger related
+        'TC INLET': 'Turbocharger', 'TC OUTLET': 'Turbocharger', 
+        'TURBOCHARGER': 'Turbocharger', 'TURBO CHARGER': 'Turbocharger',
+        'TC SPEED': 'Turbocharger', 'TC BEARING': 'Turbocharger',
+        # Fuel system
+        'FUEL PUMP': 'Fuel Pump', 'FUEL VALVE': 'Fuel Valve',
+        'FUEL INJECTION': 'Fuel Valve', 'FO TRANSFER': 'Fuel System',
+        'FUEL OIL': 'Fuel System', 'FO PURIFIER': 'Fuel System',
+        # Cooling system
+        'JCFW': 'Cooling water system', 'JACKET WATER': 'Cooling water system',
+        'CFW': 'Cooling water system', 'COOLING WATER': 'Cooling water system',
+        'LT FW': 'Cooling water system', 'HT FW': 'Cooling water system',
+        # Lubrication
+        'LO TEMP': 'Lubrication System', 'LO PRESSURE': 'Lubrication System',
+        'LO PURIFIER': 'Lubrication System', 'LUBE OIL': 'Lubrication System',
+        # Exhaust system
+        'EXH TEMP': 'Exhaust Valve', 'EXHAUST GAS': 'Exhaust Valve',
+        'EXH GAS': 'Exhaust Valve', 'EXHAUST VALVE': 'Exhaust Valve',
+        # Starting air
+        'AIR COMPRESSOR': 'Starting Air System', 'START AIR': 'Starting Air System',
+        'MAIN AIR': 'Starting Air System', 'MAC': 'Starting Air System',
+        # Cylinder/Piston
+        'CYLINDER': 'Cylinder Liner', 'PISTON': 'Piston',
+        'LINER': 'Cylinder Liner',
+        # Bearings
+        'BEARING': 'Main bearing', 'BIG END': 'Big End Bearing',
+        'CROSS HEAD': 'Cross head bearing',
+        # Other common
+        'BOILER': 'Boiler', 'GENERATOR': 'Engine (General)',
+        'SLOWDOWN': 'Engine (General)', 'SHUTDOWN': 'Engine (General)',
+        'BLACKOUT': 'Engine (General)', 'TRIP': 'Engine (General)',
     }
     
-    for pattern, component in patterns.items():
+    for pattern, component in component_patterns.items():
         if pattern in desc:
             return component
+    
+    # Default to None if no match found
+    return None
+
+
+def extract_equipment_type_from_description(description):
+    """
+    Extract equipment type (Main Engine, Aux Engine, etc.) from description
+    """
+    if pd.isna(description):
+        return None
+    
+    desc = str(description).upper()
+    
+    # Equipment type patterns
+    if any(p in desc for p in ['ME ', 'ME1', 'ME2', 'MAIN ENGINE', 'M/E']):
+        return 'Main Engine'
+    elif any(p in desc for p in ['AE', 'GE', 'AUX ENGINE', 'GENERATOR', 'DG', 'D/G']):
+        return 'Aux Engine'
+    elif any(p in desc for p in ['BWTS', 'BALLAST']):
+        return 'BWTS'
+    elif any(p in desc for p in ['BOILER']):
+        return 'Boiler'
     
     return None
 
@@ -635,6 +735,7 @@ def create_master_actions():
 def calculate_metrics_and_join(master_equipment, master_incidents, master_actions, master_parts=None):
     """
     Section 4.5 & 5: Join all masters and calculate metrics
+    FIXED: Now uses FMECA component matching and avoids incident duplication
     """
     print("\n" + "=" * 60)
     print("STEP 4: Joining Data and Calculating Metrics")
@@ -647,16 +748,82 @@ def calculate_metrics_and_join(master_equipment, master_incidents, master_action
     if master_parts is None:
         master_parts = pd.DataFrame()
     
-    # Join equipment with incidents (on vessel_name + component)
-    print("  Joining equipment with incidents...")
-    unified = master_equipment.merge(
+    # Load FMECA data for component matching
+    print("  Loading FMECA data for component matching...")
+    load_fmeca_data()
+    
+    # STEP 1: Extract component and equipment type from incident descriptions
+    print("  Extracting components from incident descriptions...")
+    
+    # Get description column (try different possible names)
+    desc_col = None
+    for col in ['incident_description', 'alert_description', 'description']:
+        if col in master_incidents.columns:
+            desc_col = col
+            break
+    
+    if desc_col:
+        master_incidents['matched_component'] = master_incidents[desc_col].apply(extract_component_from_description)
+        master_incidents['matched_equipment_type'] = master_incidents[desc_col].apply(extract_equipment_type_from_description)
+    else:
+        master_incidents['matched_component'] = None
+        master_incidents['matched_equipment_type'] = None
+    
+    # Fill missing components with 'Engine (General)'
+    master_incidents['matched_component'] = master_incidents['matched_component'].fillna('Engine (General)')
+    
+    # STEP 2: Create vessel-to-equipment mapping (one Make/Model per vessel, not per component)
+    # This avoids the AE1, AE2, AE3 duplication
+    vessel_equipment = master_equipment.drop_duplicates(subset=['vessel_name', 'make_model'])[
+        ['vessel_name', 'make_model', 'equipment_type', 'make', 'model']
+    ].copy()
+    
+    print(f"  Unique vessel-equipment mappings: {len(vessel_equipment)}")
+    
+    # STEP 3: Join incidents to equipment on vessel_name (no component duplication)
+    print("  Joining equipment with incidents (no duplication)...")
+    unified = vessel_equipment.merge(
         master_incidents,
         on='vessel_name',
         how='left',
         suffixes=('', '_incident')
     )
     
-    # Join with actions (on vessel_name + component + date range)
+    # STEP 3.1: Filter incidents to match equipment_type
+    # This prevents Main Engine incidents from being counted for Aux Engine and vice versa
+    print("  Filtering incidents by equipment type...")
+    
+    def equipment_types_match(row):
+        """Check if incident equipment type matches the equipment record type"""
+        incident_eq_type = row.get('matched_equipment_type')
+        record_eq_type = row.get('equipment_type')
+        
+        # If incident has no detected equipment type, include it (could be general)
+        if pd.isna(incident_eq_type) or incident_eq_type is None:
+            return True
+        
+        # If equipment type matches, include
+        if incident_eq_type == record_eq_type:
+            return True
+        
+        # Handle aliases: GE (Generator Engine) = Aux Engine
+        if incident_eq_type == 'Aux Engine' and record_eq_type == 'Aux Engine':
+            return True
+        if incident_eq_type == 'Main Engine' and record_eq_type == 'Main Engine':
+            return True
+            
+        return False
+    
+    # Apply filter
+    before_filter = len(unified)
+    unified = unified[unified.apply(equipment_types_match, axis=1)]
+    after_filter = len(unified)
+    print(f"  Filtered: {before_filter} -> {after_filter} rows (removed {before_filter - after_filter} mismatched)")
+    
+    # Use matched_component as the component_id (actual FMECA component names)
+    unified['component_id'] = unified['matched_component']
+    
+    # Join with actions (on vessel_name + date range)
     if not master_actions.empty:
         print("  Joining with actions...")
         # Match actions to failures (action_date within 90 days of failure_date)
@@ -674,10 +841,10 @@ def calculate_metrics_and_join(master_equipment, master_incidents, master_action
     # Parts data will be used in metrics calculation, not joined here
     # (to avoid data explosion from many-to-many relationships)
     
-    # Calculate metrics per make/model/component
+    # Calculate metrics per make/model/component (now using actual component names)
     print("  Calculating metrics...")
     
-    # Group by make_model and component_id for metric calculation
+    # Group by make_model and component_id (now actual component names from FMECA)
     metrics_list = []
     
     for (make_model, component_id), group in unified.groupby(['make_model', 'component_id']):
@@ -685,7 +852,17 @@ def calculate_metrics_and_join(master_equipment, master_incidents, master_action
             continue
         
         # Get failures for this make/model/component
+        # IMPORTANT: Get UNIQUE failures by dropping duplicates on key columns
+        # This prevents counting the same failure multiple times due to action joins
         failures = group[group['failure_date'].notna()].copy()
+        
+        # Create a unique failure identifier to deduplicate
+        if 'incident_description' in failures.columns:
+            failures = failures.drop_duplicates(subset=['vessel_name', 'failure_date', 'incident_description'])
+        elif 'alert_description' in failures.columns:
+            failures = failures.drop_duplicates(subset=['vessel_name', 'failure_date', 'alert_description'])
+        else:
+            failures = failures.drop_duplicates(subset=['vessel_name', 'failure_date'])
         
         if len(failures) == 0:
             continue
@@ -913,12 +1090,18 @@ def calculate_metrics_and_join(master_equipment, master_incidents, master_action
             'parts_per_failure': None,
             'top_parts': None,  # JSON list of top part names
             'top_parts_consumption': None,  # JSON list of consumption counts
+            'parts_detail_json': None,  # Full breakdown: [{part_name, count, unit_cost, total_cost}]
         }
         
         # Calculate cost impact if parts data available
-        if not master_parts.empty and 'component_id' in master_parts.columns:
-            # Match parts to this component_id (AE1, AE2, AE3, AE4, ME1)
-            component_parts = master_parts[master_parts['component_id'] == component_id].copy()
+        if not master_parts.empty:
+            # Match parts: use matched_component (FMECA) if available, else fallback to component_id (AE1/AE2)
+            if 'matched_component' in master_parts.columns:
+                component_parts = master_parts[master_parts['matched_component'] == component_id].copy()
+            elif 'component_id' in master_parts.columns:
+                component_parts = master_parts[master_parts['component_id'] == component_id].copy()
+            else:
+                component_parts = pd.DataFrame()
             
             if len(component_parts) > 0:
                 # Calculate total cost from parts
@@ -951,13 +1134,37 @@ def calculate_metrics_and_join(master_equipment, master_incidents, master_action
                             metrics_record['stock_risk'] = 'Low'
                 
                 # Store top parts for this component (for Level 3 display)
-                top_parts = component_parts.groupby('part_name').agg({
-                    'quantity': 'sum',
-                    'part_cost': 'sum'
-                }).reset_index().sort_values('quantity', ascending=False).head(5)
+                component_parts['_cost'] = pd.to_numeric(component_parts['part_cost'], errors='coerce').fillna(0)
+                component_parts['_qty'] = pd.to_numeric(component_parts['quantity'], errors='coerce').fillna(1)
+                component_parts['_line_total'] = component_parts['_cost'] * component_parts['_qty']
                 
+                parts_agg = component_parts.groupby('part_name').agg({
+                    'quantity': 'sum',
+                    '_line_total': 'sum'
+                }).reset_index()
+                parts_agg['total_cost'] = parts_agg['_line_total']
+                parts_agg['unit_cost'] = np.where(parts_agg['quantity'] > 0, 
+                                                   parts_agg['total_cost'] / parts_agg['quantity'], 0)
+                parts_agg = parts_agg.sort_values('quantity', ascending=False)
+                
+                top_parts = parts_agg.head(5)
                 metrics_record['top_parts'] = str(top_parts['part_name'].tolist())
-                metrics_record['top_parts_consumption'] = str(top_parts['quantity'].tolist())
+                metrics_record['top_parts_consumption'] = str(top_parts['quantity'].astype(int).tolist())
+                
+                # Build parts_detail_json for full breakdown
+                import json
+                parts_detail = []
+                for _, row in parts_agg.iterrows():
+                    qty = int(row['quantity']) if pd.notna(row['quantity']) else 0
+                    unit_cost = float(row['unit_cost']) if pd.notna(row['unit_cost']) else 0
+                    total_cost = float(row['total_cost']) if pd.notna(row['total_cost']) else 0
+                    parts_detail.append({
+                        'part_name': str(row['part_name']),
+                        'count': qty,
+                        'unit_cost': round(unit_cost, 2),
+                        'total_cost': round(total_cost, 2)
+                    })
+                metrics_record['parts_detail_json'] = json.dumps(parts_detail) if parts_detail else None
         
         metrics_list.append(metrics_record)
     
@@ -1071,13 +1278,65 @@ def identify_bad_actors(metrics_df):
 # STEP 5: PROCESS SPARE PARTS DATA
 # ============================================================================
 
-# SSDG to Component mapping for parts
+# SSDG to Component mapping for parts (legacy)
 SSDG_TO_COMPONENT = {
     'SSDG1': 'AE1',
     'SSDG2': 'AE2', 
     'SSDG3': 'AE3',
     'SSDG4': 'AE4',
 }
+
+# Part name to FMECA component mapping (for DG RMA linkage)
+# Maps DG RMA part names to our component_id used in processed data
+PART_NAME_TO_COMPONENT = {
+    # Bearings
+    'bearings': 'Main bearing', 'bearing': 'Main bearing',
+    # Cylinder
+    'cylinder': 'Cylinder Liner', 'cylinders': 'Cylinder Liner',
+    # Cooling
+    'cooler': 'Cooling water system', 'coolers': 'Cooling water system',
+    'lo cooler': 'Lubrication System', 'jw pump': 'Cooling water system',
+    'jw hose': 'Cooling water system', 'jw seal': 'Cooling water system',
+    'jw pump seal': 'Cooling water system', 'jw transducer': 'Cooling water system',
+    'intercooler': 'Cooling water system',
+    # Lubrication
+    'lo pump': 'Lubrication System', 'lo pressure switch': 'Lubrication System',
+    # Exhaust / Turbo
+    'exhaust': 'Exhaust Valve', 'turbo exhaust': 'Turbocharger',
+    'turbocharger': 'Turbocharger',
+    # Fuel
+    'fo pump': 'Fuel System', 'fo injector': 'Fuel System',
+    'fuel pump': 'Fuel System', 'fuel valve': 'Fuel Valve',
+    # Valves
+    'check valve': 'Valve', 'spill valve': 'Valve', 'valve': 'Valve',
+    # Starting air
+    'air manifold': 'Starting Air System', 'actuator': 'Starting Air System',
+    # Hydraulic
+    'flex hose': 'Hydraulic Hose', 'hydraulic hose': 'Hydraulic Hose',
+    # Control / General
+    'control': 'Engine (General)', 'control wiring': 'Engine (General)',
+    'comm cable': 'Engine (General)', 'pressure sensor': 'Engine (General)',
+    'inlet switch': 'Engine (General)', 'filtrex': 'Engine (General)',
+    'coupling': 'Engine (General)', 'gasket': 'Engine (General)',
+    'driveshaft': 'Engine (General)', 'keep warm pump': 'Engine (General)',
+    'sw pump': 'Engine (General)', 'oil pan leak': 'Engine (General)',
+    '1s-2s switchboard': 'Engine (General)',
+}
+
+
+def map_part_to_component(part_name):
+    """Map DG RMA part name to FMECA component. Returns None if no match."""
+    if pd.isna(part_name):
+        return None
+    key = str(part_name).strip().lower()
+    # Exact match first
+    if key in PART_NAME_TO_COMPONENT:
+        return PART_NAME_TO_COMPONENT[key]
+    # Partial match
+    for part_key, comp in PART_NAME_TO_COMPONENT.items():
+        if part_key in key or key in part_key:
+            return comp
+    return 'Engine (General)'  # Default catch-all
 
 
 def extract_parts_from_sheet2_or_3(parts_file, sheet_name):
@@ -1288,9 +1547,12 @@ def create_master_parts():
         if all_parts:
             master_parts = pd.DataFrame(all_parts)
             
-            print(f"\n  ✅ Created master_parts with {len(master_parts)} records")
+            # Add matched_component for linkage to our FMECA component names
+            master_parts['matched_component'] = master_parts['part_name'].apply(map_part_to_component)
+            
+            print(f"\n  [OK] Created master_parts with {len(master_parts)} records")
             print(f"     Unique parts: {master_parts['part_name'].nunique()}")
-            print(f"     With component_id: {master_parts['component_id'].notna().sum()}")
+            print(f"     Mapped to components: {master_parts['matched_component'].nunique()}")
             print(f"     With cost: {master_parts['part_cost'].notna().sum()}")
             
             return master_parts
@@ -1339,10 +1601,10 @@ def main():
     # Save output
     if not processed_data.empty:
         processed_data.to_csv(OUTPUT_FILE, index=False)
-        print(f"\n✅ SUCCESS: Saved {len(processed_data)} records to {OUTPUT_FILE}")
+        print(f"\n[OK] SUCCESS: Saved {len(processed_data)} records to {OUTPUT_FILE}")
         print(f"   Columns: {list(processed_data.columns)}")
     else:
-        print("\n❌ ERROR: No data processed. Check input files and errors above.")
+        print("\n[ERROR] ERROR: No data processed. Check input files and errors above.")
     
     return processed_data
 

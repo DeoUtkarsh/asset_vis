@@ -1,0 +1,31 @@
+# RAG Chatbot Dependencies
+# Install with: pip install -r requirements_chatbot.txt
+
+# Core LlamaIndex (let pip resolve compatible versions)
+llama-index
+llama-index-core
+
+# NVIDIA Integration
+llama-index-llms-nvidia
+llama-index-embeddings-nvidia
+
+# Vector Store
+llama-index-vector-stores-chroma
+chromadb
+
+# Query Engines
+llama-index-experimental
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.3
+openpyxl==3.1.2
+
+# Streamlit UI
+streamlit==1.30.0
+
+# Visualization
+plotly==5.18.0
+
+# Environment
+python-dotenv==1.0.0

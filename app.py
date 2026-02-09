@@ -390,25 +390,16 @@ def show_level_1_make_model_selection(df):
     display_df['MTBF (hours)'] = display_df['MTBF (hours)'].apply(lambda x: format_number(x, 1) if pd.notna(x) else "N/A")
     display_df['Failure Rate / 1000h'] = display_df['Failure Rate / 1000h'].apply(lambda x: format_number(x, 2) if pd.notna(x) else "N/A")
     
-    # Display table with selection
-    selected_indices = st.dataframe(
+    # Display table (selection via dropdown below)
+    st.dataframe(
         display_df,
         use_container_width=True,
-        height=400,
-        on_select="rerun",
-        selection_mode="single-row"
+        height=400
     )
     
-    # Get selected make/model
-    selected_make_model = None
-    if selected_indices.selection.rows:
-        selected_idx = selected_indices.selection.rows[0]
-        if selected_idx < len(filtered_summary):
-            selected_make_model = filtered_summary.iloc[selected_idx]['make_model']
-    
-    # Alternative: Use selectbox for selection
+    # Select make/model via dropdown
     st.markdown("---")
-    st.markdown("### Or Select Make/Model from Dropdown:")
+    st.markdown("### Select Make/Model to view Bad Actors:")
     
     make_model_list = [''] + list(filtered_summary['make_model'].unique())
     selected_from_dropdown = st.selectbox(
@@ -418,9 +409,7 @@ def show_level_1_make_model_selection(df):
         key="make_model_selector"
     )
     
-    if selected_from_dropdown:
-        selected_make_model = selected_from_dropdown
-    
+    selected_make_model = selected_from_dropdown if selected_from_dropdown else None
     return selected_make_model
 
 
@@ -467,13 +456,11 @@ def show_level_2_bad_actors(df, make_model):
         components_df = get_bad_actors_by_components(df, make_model)
         
         if len(components_df) > 0:
-            # Display table
+            # Display table (selection via dropdown below)
             st.dataframe(
                 components_df,
                 use_container_width=True,
-                height=400,
-                on_select="rerun",
-                selection_mode="single-row"
+                height=400
             )
             
             # Store selected component for Level 3
